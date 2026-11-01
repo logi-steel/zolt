@@ -1,0 +1,16 @@
+fn main (use => std::io) {
+    listydemo()
+}
+
+fn listydemo (use => std::io std::lists) {
+    spoczko.lst : [oki, baj, po co, zegnaj, 12, 3.5, true]
+    if spoczko.lst has "oki" {
+        sys::out("cool")
+    }
+    spoczko.lst.add "dodajemy juhu"
+    spoczko.lst.add 7
+    spoczko.lst.del "baj"
+    spoczko.lst.chnm "po co" -> "dlaczego"
+    spoczko.lst.chnm 12 -> b.false
+    sys::out("<spoczko.lst>")
+}

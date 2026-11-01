@@ -1,0 +1,29 @@
+fn main (use => std::io std::loops) {
+    let liczba : 12
+    if liczba = 12 loop.3.times {
+        sys::out("12 to <liczba>")
+    }
+    else loop.inf {
+        sys::out("12 to nie jest <liczba>")
+        loop.inf.1 : loop.inf.1 + 12
+    }
+    if loop.inf.1 < 12 {
+        sys::out("co tu napisać ?")
+    }
+    else {
+        sys::out("bye")
+    }
+
+    let &_odliczanie : 3
+    while odliczanie > 0 {
+        sys::out("odliczam <odliczanie>")
+        odliczanie : odliczanie - 1
+    }
+
+    loop.inf {
+        sys::out("obrót <loop.inf.2>")
+        if loop.inf.2 = 2 { loop,end }
+    }
+    let gotowe : b.true
+    sys::out("gotowe: <gotowe>")
+}

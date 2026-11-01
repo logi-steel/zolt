@@ -1,0 +1,9 @@
+[package]
+name = "zolt"
+version = "0.0.1"
+edition = "2024"
+license = "WTFPL"
+description = "Mały język kompilowany do C"
+
+[dependencies]
+serde_json = "1.0.154"

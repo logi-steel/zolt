@@ -1,0 +1,39 @@
+__ funkcje: parametry, pożyczki i retrn __
+fn main (use => std::io std::lists) {
+    sys::out("2 + 3 = <dodaj(2, 3)>")
+    sys::out("1.5 + 2 = <dodaj(1.5, 2)>")
+    sys::out("fib(20) = <fib(20)>")
+
+    let &_licznik : 0
+    podbij(&_licznik)
+    podbij(&_licznik)
+    sys::out("licznik po dwóch podbiciach: <licznik>")
+
+    zakupy.lst : [mleko, 2, true]
+    dopisz(&_zakupy.lst, "chleb")
+    pokaz(&zakupy.lst)
+}
+
+fn dodaj (a, b) {
+    retrn a + b
+}
+
+fn fib (n) {
+    if n < 2 { retrn n }
+    retrn fib(n - 1) + fib(n - 2)
+}
+
+fn podbij (&_x) {
+    x : x + 1
+}
+
+fn dopisz (&_lista.lst, co use => std::lists) {
+    lista.lst.add co
+}
+
+fn pokaz (&lista.lst use => std::io std::lists) {
+    sys::out("lista: <lista.lst>")
+    if lista.lst has 2 {
+        sys::out("jest w niej liczba 2")
+    }
+}

@@ -1,0 +1,29 @@
+__ szablon i obiekty z niego __
+gracz : {
+    imie : "bezimienny"
+    hp : 30
+    exp : 0
+    isAlive : b.true
+    zdobadz : (ile) {
+        exp : exp + ile
+    }
+    pokaz : (use => std::io) {
+        sys::out("<imie>: hp <hp>, exp <exp>")
+    }
+}
+
+fn main (use => std::io) {
+    let &_gracz.1
+    let &_gracz.2
+    gracz.1.imie : "Ala"
+    gracz.2.hp : gracz.2.hp - 25
+    gracz.1.zdobadz(50)
+    gracz.1.pokaz()
+    gracz.2.pokaz()
+    lecz(&_gracz.2)
+    sys::out("cały gracz 2: <gracz.2>")
+}
+
+fn lecz (&_g) {
+    g.hp : g.hp + 10
+}

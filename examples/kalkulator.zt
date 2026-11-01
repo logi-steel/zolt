@@ -1,0 +1,10 @@
+fn main (use => std::io) {
+    sys::read("podaj liczbę do obliczenia !")
+    let liczbaDoObliczenia : sys::read1
+    sys::read("jakie chcesz działanie dokonać ?")
+    let działanie : sys::read2
+    sys::read("a co ma być drugą liczbą ?")
+    let drugaLiczba : sys::read3
+    let wynik : liczbaDoObliczenia <>sys::read2<> drugaLiczba
+    sys::out("wynik to <wynik>")
+}

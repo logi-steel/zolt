@@ -1,0 +1,15 @@
+
+# ---- ZOLT (dopisane przez zoltbaybe/editors/helix/zainstaluj.sh)
+[[language]]
+name = "zolt"
+scope = "source.zolt"
+file-types = ["zt"]
+roots = []
+block-comment-tokens = { start = "__", end = "__" }
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["zolt"]
+auto-pairs = { '(' = ')', '{' = '}', '[' = ']', '"' = '"' }
+
+[language-server.zolt]
+command = "zolt"
+args = ["lsp"]

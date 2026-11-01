@@ -1,0 +1,11 @@
+__ pierwszy program w Zolt __
+fn main (use => std::io, std::this::lib::does::nothing) {
+    let &_oki : 12
+    oki : oki + 1
+    let pi : c32_3.14159265
+    let bajt : c8_100
+    let wielka : c128_170141183460469231731687303715884105727
+    sys::out("oki to : <oki>")
+    sys::out("pi (32 bity) to : <pi>")
+    sys::out("bajt to <bajt>, a wielka to <wielka>")
+}

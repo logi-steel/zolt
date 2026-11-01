@@ -1,0 +1,19 @@
+{
+  "grammars": [
+    {
+      "name": "zolt",
+      "camelcase": "Zolt",
+      "title": "Zolt",
+      "scope": "source.zolt",
+      "path": ".",
+      "file-types": [
+        "zt"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "description": "Zolt grammar for tree-sitter (highlighting only)"
+  }
+}
