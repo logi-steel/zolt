@@ -1,6 +1,6 @@
 [package]
 name = "zolt"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 license = "WTFPL"
 description = "Mały język kompilowany do C"
