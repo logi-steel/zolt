@@ -1,11 +1,8 @@
-/* runtime Zolt (PoC) */
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
-#include <math.h>
+/* runtime Zolt (PoC). Do programu trafiają tylko kawałki, których używa: kawałek zaczyna
+   linia ze znacznikiem i nazwami, a codegen bierze go, gdy któraś nazwa jest w kodzie.
+   Nagłówki (#include) dobiera codegen. */
 
+/*@ zt_pi128( */
 static void zt_pi128(FILE *f, __int128 v) {
     char b[48];
     int i = sizeof b - 1;
@@ -16,6 +13,7 @@ static void zt_pi128(FILE *f, __int128 v) {
     fputs(b + i, f);
 }
 
+/*@ zt_readline( */
 static const char *zt_readline(void) {
     fflush(stdout);
     char *s = NULL;
@@ -26,6 +24,7 @@ static const char *zt_readline(void) {
     return s;
 }
 
+/*@ zt_num( */
 static double zt_num(const char *s) {
     char *end;
     double d = strtod(s, &end);
@@ -37,6 +36,7 @@ static double zt_num(const char *s) {
     return d;
 }
 
+/*@ zt_dyn( */
 static double zt_dyn(double a, const char *op, double b) {
     while (*op == ' ') op++;
     size_t n = strlen(op);
@@ -52,12 +52,14 @@ static double zt_dyn(double a, const char *op, double b) {
     exit(1);
 }
 
+/*@ zt_arg( */
 /* sys::arg1, sys::arg2, ... (brak = pusty tekst) */
 static int zt_argc;
 static char **zt_argv;
 
 static const char *zt_arg(int i) { return i < zt_argc ? zt_argv[i] : ""; }
 
+/*@ zt_file( */
 /* sys::file("plik") - cały plik jako tekst */
 static const char *zt_file(const char *name) {
     FILE *f = fopen(name, "rb");
@@ -74,6 +76,7 @@ static const char *zt_file(const char *name) {
     return s;
 }
 
+/*@ zt_len( zt_at( */
 /* tekst.len i tekst.at i: liczymy znaki (UTF-8), od 1.
    Teksty się nie zmieniają, więc dla ostatnich pamiętamy długość i miejsce
    ostatniego `.at` - pętla `while i <= kod.len { kod.at i }` nie liczy od początku. */
@@ -135,20 +138,31 @@ static const char *zt_at(const char *s, int64_t i) {
     return r;
 }
 
+/*@ zt_noret( */
 [[noreturn]] static void zt_noret(const char *f) {
     fprintf(stderr, "błąd: funkcja `%s` skończyła się bez `retrn`\n", f);
     exit(1);
 }
 
-/* element listy: tekst, liczba, ułamek albo prawda/fałsz */
+/*@ zt_lst */
+/* lista i jej element: tekst, liczba, ułamek albo prawda/fałsz */
 enum { ZT_TXT, ZT_INT, ZT_FLT, ZT_BOOL };
 typedef struct { int t; int64_t i; double f; const char *s; } zt_val;
+typedef struct { zt_val *v; size_t n, cap; } zt_lst;
 
+/*@ zt_vt( */
 static zt_val zt_vt(const char *s) { return (zt_val){ .t = ZT_TXT, .s = s }; }
+
+/*@ zt_vi( */
 static zt_val zt_vi(int64_t i) { return (zt_val){ .t = ZT_INT, .i = i }; }
+
+/*@ zt_vf( */
 static zt_val zt_vf(double f) { return (zt_val){ .t = ZT_FLT, .f = f }; }
+
+/*@ zt_vb( */
 static zt_val zt_vb(bool b) { return (zt_val){ .t = ZT_BOOL, .i = b }; }
 
+/*@ zt_val_eq( */
 static bool zt_val_eq(zt_val a, zt_val b) {
     bool an = a.t == ZT_INT || a.t == ZT_FLT, bn = b.t == ZT_INT || b.t == ZT_FLT;
     if (an && bn) return (a.t == ZT_INT ? (double)a.i : a.f) == (b.t == ZT_INT ? (double)b.i : b.f);
@@ -156,6 +170,7 @@ static bool zt_val_eq(zt_val a, zt_val b) {
     return a.t == ZT_TXT ? !strcmp(a.s, b.s) : a.i == b.i;
 }
 
+/*@ zt_val_print( */
 static void zt_val_print(FILE *f, zt_val v) {
     switch (v.t) {
     case ZT_TXT: fputs(v.s, f); break;
@@ -165,29 +180,33 @@ static void zt_val_print(FILE *f, zt_val v) {
     }
 }
 
-typedef struct { zt_val *v; size_t n, cap; } zt_lst;
-
+/*@ zt_lst_new( zt_lst_copy( */
 static zt_lst zt_lst_new(size_t n, const zt_val *init) {
     zt_lst l = { malloc((n + 4) * sizeof(zt_val)), n, n + 4 };
     if (n) memcpy(l.v, init, n * sizeof(zt_val));
     return l;
 }
 
+/*@ zt_lst_copy( */
 static zt_lst zt_lst_copy(zt_lst l) { return zt_lst_new(l.n, l.v); }
 
+/*@ zt_lst_add( */
 static void zt_lst_add(zt_lst *l, zt_val x) {
     if (l->n == l->cap) l->v = realloc(l->v, (l->cap *= 2) * sizeof(zt_val));
     l->v[l->n++] = x;
 }
 
+/*@ zt_lst_find( */
 static long zt_lst_find(zt_lst l, zt_val x) {
     for (size_t i = 0; i < l.n; i++)
         if (zt_val_eq(l.v[i], x)) return (long)i;
     return -1;
 }
 
+/*@ zt_lst_has( */
 static bool zt_lst_has(zt_lst l, zt_val x) { return zt_lst_find(l, x) >= 0; }
 
+/*@ zt_lst_del( */
 static void zt_lst_del(zt_lst *l, zt_val x) {
     long i = zt_lst_find(*l, x);
     if (i < 0) return;
@@ -195,11 +214,13 @@ static void zt_lst_del(zt_lst *l, zt_val x) {
     l->n--;
 }
 
+/*@ zt_lst_chnm( */
 static void zt_lst_chnm(zt_lst *l, zt_val a, zt_val b) {
     long i = zt_lst_find(*l, a);
     if (i >= 0) l->v[i] = b;
 }
 
+/*@ zt_lst_print( */
 static void zt_lst_print(FILE *f, zt_lst l) {
     putc('[', f);
     for (size_t i = 0; i < l.n; i++) {

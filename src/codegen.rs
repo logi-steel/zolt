@@ -116,29 +116,81 @@ pub fn generate(p: &Program) -> Result<String, Blad> {
             instance(&mut cx, i, vec![], f.owner.map(|_| true))?;
         }
     }
-    let mut c = String::from("/* wygenerowane przez zolt */\n");
-    c += include_str!("rt.c");
-    for (i, fs) in cx.tpls.iter().enumerate() {
-        let decl: Vec<String> = fs.iter().enumerate().map(|(k, (n, t, _))| format!("{} f{k}_{};", t.c(), ascii(n))).collect();
-        c += &format!("\n/* szablon {} */\ntypedef struct {{ {} }} zt_s{i};\n", p.tpls[i].name, decl.join(" "));
-        c += &format!("static void zt_s{i}_print(FILE *f, zt_s{i} v) {{\n    putc('{{', f);\n");
-        for (k, (n, t, _)) in fs.iter().enumerate() {
-            let label = cstr(&format!("{}{n}: ", if k > 0 { ", " } else { "" }));
-            c += &format!("    fputs({label}, f);\n    {}\n", print_c(&format!("v.f{k}_{}", ascii(n)), *t, "f"));
+    let mut fns = String::new();
+    if cx.inst.len() > 1 {
+        fns += "\n";
+        for x in &cx.inst {
+            fns += &format!("static {} {}({});\n", x.ret.c(), x.cn, x.sig);
         }
-        c += "    putc('}', f);\n}\n";
-    }
-    c += "\n";
-    for x in &cx.inst {
-        c += &format!("static {} {}({});\n", x.ret.c(), x.cn, x.sig);
     }
     for x in &cx.inst {
         let f = &p.funcs[x.f];
-        c += &format!("\n/* fn {}, use => {} */\n", f.name, f.uses.join(", "));
-        c += &format!("static {} {}({}) {{\n{}}}\n", x.ret.c(), x.cn, x.sig, x.body);
+        fns += &format!("\n/* fn {}, use => {} */\n", f.name, f.uses.join(", "));
+        fns += &format!("static {} {}({}) {{\n{}}}\n", x.ret.c(), x.cn, x.sig, x.body);
     }
-    c += &format!("\nint main(int argc, char **argv) {{\n    zt_argc = argc;\n    zt_argv = argv;\n    {}();\n    return 0;\n}}\n", cx.inst[mi].cn);
-    Ok(c)
+    let mut tpl = String::new();
+    for (i, fs) in cx.tpls.iter().enumerate() {
+        let decl: Vec<String> = fs.iter().enumerate().map(|(k, (n, t, _))| format!("{} f{k}_{};", t.c(), ascii(n))).collect();
+        tpl += &format!("\n/* szablon {} */\ntypedef struct {{ {} }} zt_s{i};\n", p.tpls[i].name, decl.join(" "));
+        if !fns.contains(&format!("zt_s{i}_print(")) {
+            continue;
+        }
+        tpl += &format!("static void zt_s{i}_print(FILE *f, zt_s{i} v) {{\n    putc('{{', f);\n");
+        for (k, (n, t, _)) in fs.iter().enumerate() {
+            let label = cstr(&format!("{}{n}: ", if k > 0 { ", " } else { "" }));
+            tpl += &format!("    fputs({label}, f);\n    {}\n", print_c(&format!("v.f{k}_{}", ascii(n)), *t, "f"));
+        }
+        tpl += "    putc('}', f);\n}\n";
+    }
+    let rt = runtime(&(tpl.clone() + &fns));
+    let main = if rt.contains("zt_argc") {
+        format!("int main(int argc, char **argv) {{\n    zt_argc = argc;\n    zt_argv = argv;\n    {}();\n    return 0;\n}}\n", cx.inst[mi].cn)
+    } else {
+        format!("int main(void) {{\n    {}();\n    return 0;\n}}\n", cx.inst[mi].cn)
+    };
+    let parts: Vec<&str> = [rt.as_str(), &tpl, &fns, &main].into_iter().map(str::trim).filter(|s| !s.is_empty()).collect();
+    let body = parts.join("\n\n");
+    Ok(format!("/* wygenerowane przez zolt */\n{}\n{body}\n", naglowki(&body)))
+}
+
+// z rt.c bierzemy tylko kawałki, których program używa; kawałek zaczyna linia `/*@ nazwy */`
+// i trafia do programu, gdy któraś z tych nazw jest w kodzie (też w innym wziętym kawałku)
+fn runtime(kod: &str) -> String {
+    let mut parts: Vec<(Vec<&str>, String)> = Vec::new();
+    for l in include_str!("rt.c").lines() {
+        if let Some(m) = l.strip_prefix("/*@").and_then(|m| m.strip_suffix("*/")) {
+            parts.push((m.split_whitespace().collect(), String::new()));
+        } else if let Some((_, s)) = parts.last_mut() {
+            *s += l;
+            s.push('\n');
+        }
+    }
+    let mut used = vec![false; parts.len()];
+    let mut text = kod.to_string();
+    let mut more = true;
+    while more {
+        more = false;
+        for (k, (names, s)) in parts.iter().enumerate() {
+            if !used[k] && names.iter().any(|n| text.contains(n)) {
+                used[k] = true;
+                text += s;
+                more = true;
+            }
+        }
+    }
+    parts.iter().zip(used).filter(|(_, u)| *u).map(|((_, s), _)| s.as_str()).collect()
+}
+
+// tylko nagłówki, z których kod coś bierze (bool, true i false są w C23 bez nagłówka)
+fn naglowki(kod: &str) -> String {
+    const H: &[(&str, &[&str])] = &[
+        ("math.h", &["fmod("]),
+        ("stdint.h", &["int64_t", "INT64_C"]),
+        ("stdio.h", &["printf(", "puts(", "putc(", "putchar(", "FILE", "getline("]),
+        ("stdlib.h", &["exit(", "malloc(", "realloc(", "free(", "strtod("]),
+        ("string.h", &["strcmp(", "strlen(", "memcpy(", "memmove("]),
+    ];
+    H.iter().filter(|(_, n)| n.iter().any(|n| kod.contains(n))).map(|(h, _)| format!("#include <{h}>\n")).collect()
 }
 
 // funkcja bez typów w parametrach: typy biorą się z argumentów przy wywołaniu
@@ -179,7 +231,10 @@ fn instance(cx: &mut Ctx, fi: usize, tys: Vec<Ty>, self_mut: Option<bool>) -> Re
     cx.inst.push(Inst { f: fi, tys, self_mut, cn, sig, ret, body: String::new() });
     let mut g = Gen { cx, me, out: String::new(), ind: 1, scopes: vec![scope], n: 0, depth: 0 };
     g.stmts(&f.body)?;
-    let mut body = format!("    const char *zt_rd[{}] = {{0}};\n", f.reads + 1);
+    let mut body = String::new();
+    if f.reads > 0 {
+        body += &format!("    const char *zt_rd[{}] = {{0}};\n", f.reads + 1);
+    }
     for k in 1..=f.infs {
         body += &format!("    int64_t zt_inf{k} = 0;\n");
     }
@@ -273,19 +328,14 @@ impl Gen<'_, '_> {
                 }
                 self.line(&format!("{tc} = {vc};"));
             }
-            St::Out(e) => {
-                self.print(e, "stdout")?;
-                self.line("putchar('\\n');");
-            }
+            St::Out(e) => self.print(e, "stdout", '\n')?,
             St::Err(e) => {
                 self.line("fflush(stdout);");
-                self.print(e, "stderr")?;
-                self.line("fputc('\\n', stderr);");
+                self.print(e, "stderr", '\n')?;
                 self.line("exit(1);");
             }
             St::Read(e, k) => {
-                self.print(e, "stdout")?;
-                self.line("putchar(' ');");
+                self.print(e, "stdout", ' ')?;
                 self.line(&format!("zt_rd[{k}] = zt_readline();"));
             }
             St::Loop(lp, body) => self.looped(lp, body)?,
@@ -412,7 +462,8 @@ impl Gen<'_, '_> {
                     return Err(n.err(format!("`loop.N.times` potrzebuje liczby całkowitej, a tu jest {}", nt.name())));
                 }
                 self.n += 1;
-                self.line(&format!("for (int64_t zt_i{0} = 0; zt_i{0} < (int64_t)({1}); zt_i{0}++) {{", self.n, nc));
+                let nc = if nc.bytes().all(|b| b.is_ascii_digit()) { nc } else { format!("(int64_t)({nc})") };
+                self.line(&format!("for (int64_t zt_i{0} = 0; zt_i{0} < {1}; zt_i{0}++) {{", self.n, nc));
             }
             LoopKind::Inf(k) => {
                 self.line(&format!("zt_inf{k} = 0;"));
@@ -542,14 +593,31 @@ impl Gen<'_, '_> {
         Ok((format!("{}({})", self.cx.inst[i].cn, cs.join(", ")), self.cx.inst[i].ret))
     }
 
-    fn print(&mut self, e: &E, f: &str) -> Result<(), Blad> {
-        let Ex::Str(parts) = &e.ex else { return self.print_val(e, f) };
-        for p in parts {
+    // wypisuje e, a na końcu znak end (doklejony do ostatniego kawałka tekstu, jeśli się da)
+    fn print(&mut self, e: &E, f: &str, end: char) -> Result<(), Blad> {
+        let parts: &[Part] = if let Ex::Str(p) = &e.ex { p } else { &[] };
+        if let [Part::Lit(s)] = parts
+            && f == "stdout"
+            && end == '\n'
+        {
+            self.line(&format!("puts({});", cstr(s)));
+            return Ok(());
+        }
+        if parts.is_empty() {
+            self.print_val(e, f)?;
+        }
+        for (k, p) in parts.iter().enumerate() {
             match p {
+                Part::Lit(s) if k + 1 == parts.len() => {
+                    self.line(&format!("fputs({}, {f});", cstr(&format!("{s}{end}"))));
+                    return Ok(());
+                }
                 Part::Lit(s) => self.line(&format!("fputs({}, {f});", cstr(s))),
                 Part::Code(c) => self.print_val(c, f)?,
             }
         }
+        let ch = if end == '\n' { "'\\n'".to_string() } else { format!("'{end}'") };
+        self.line(&if f == "stdout" { format!("putchar({ch});") } else { format!("putc({ch}, {f});") });
         Ok(())
     }
 
@@ -572,8 +640,8 @@ impl Gen<'_, '_> {
                 }
                 let t = Ty::Int(n);
                 let c = match n {
-                    64 => format!("INT64_C({v})"),
-                    ..64 => format!("(({})INT64_C({v}))", t.c()),
+                    64 => int_lit(*v as i128),
+                    ..64 => format!("(({}){})", t.c(), int_lit(*v as i128)),
                     _ => format!("(({}){v}wb)", t.c()),
                 };
                 (c, t)
@@ -655,7 +723,7 @@ impl Gen<'_, '_> {
                     .iter()
                     .map(|it| match it {
                         Item::Txt(s) => format!("zt_vt({})", cstr(s)),
-                        Item::Int(i) => format!("zt_vi(INT64_C({i}))"),
+                        Item::Int(i) => format!("zt_vi({})", int_lit(*i as i128)),
                         Item::Flt(f) => format!("zt_vf({f})"),
                         Item::Bool(b) => format!("zt_vb({b})"),
                     })
@@ -750,13 +818,19 @@ impl Gen<'_, '_> {
     }
 }
 
+// liczba w C: mała jest typu int, a większa musi być int64_t (rachunki i tak rzutują na typ Zolta)
+fn int_lit(v: i128) -> String {
+    if v.unsigned_abs() <= i32::MAX as u128 { v.to_string() } else { format!("INT64_C({v})") }
+}
+
 // wypisanie wartości do strumienia f (stdout albo bufor tekstu ze wstawkami)
 fn print_c(c: &str, t: Ty, f: &str) -> String {
+    let pf = if f == "stdout" { "printf(".to_string() } else { format!("fprintf({f}, ") };
     match t {
-        Ty::Int(n) if n <= 64 => format!("fprintf({f}, \"%lld\", (long long)({c}));"),
+        Ty::Int(n) if n <= 64 => format!("{pf}\"%lld\", (long long)({c}));"),
         Ty::Int(_) => format!("zt_pi128({f}, (__int128)({c}));"),
-        Ty::Float(32) => format!("fprintf({f}, \"%.7g\", (double)({c}));"),
-        Ty::Float(_) => format!("fprintf({f}, \"%.15g\", {c});"),
+        Ty::Float(32) => format!("{pf}\"%.7g\", (double)({c}));"),
+        Ty::Float(_) => format!("{pf}\"%.15g\", {c});"),
         Ty::Text => format!("fputs({c}, {f});"),
         Ty::Bool => format!("fputs(({c}) ? \"true\" : \"false\", {f});"),
         Ty::List => format!("zt_lst_print({f}, {c});"),
