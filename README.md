@@ -101,17 +101,18 @@ Więcej w `examples/`.
 
 ## Zolt w Zolcie
 
-`boot/zolt.zt` to kompilator Zolta napisany w Zolcie. Umie tyle języka, ile sam używa: funkcje z pożyczkami,
-`let`, `if`, `while`, `loop,end`, `retrn`, tekst ze wstawkami, `.len`, `.at`, `sys::out`, `sys::err`,
-`sys::file` i `sys::arg1`. Typy sprawdza dopiero uruchomiony program, bo w C każda wartość to `zv` z
-`boot/zrt.h`.
+`boot/zolt.zt` to kompilator Zolta napisany w Zolcie. Umie cały język z tego README: funkcje z pożyczkami,
+pętle, `sys::read`, listy, szablony z obiektami i liczby od `c1` do `c128`. Typy sprawdza dopiero uruchomiony
+program, bo w C każda wartość to `zv` z `boot/zrt.h`. Dlatego część błędów, które wersja w Ruście zgłasza
+przy kompilacji, wychodzi tu dopiero przy uruchomieniu (ten sam komunikat).
 
 ```
 boot/bootstrap.sh
 ```
 
 Skrypt tłumaczy `zolt.zt` kompilatorem w Ruście, a powstały program tłumaczy `zolt.zt` jeszcze raz.
-Oba wyniki muszą być identyczne. Na koniec `boot/test.zt` musi wypisać to samo z obu kompilatorów.
+Oba wyniki muszą być identyczne. Na koniec każdy program z `examples/` i `boot/test.zt` musi wypisać to samo
+z obu kompilatorów.
 
 Ręcznie, po bootstrapie:
 
@@ -129,8 +130,8 @@ i kolorowanie. Skrypt trzeba uruchomić ponownie po każdej zmianie kompilatora 
 
 Działa wszystko z listy wyżej, z podpowiedziami przy literówkach.
 
-Kompilator w Zolcie kompiluje sam siebie. Nie zna jeszcze list, obiektów, `loop.` i `sys::read`, a błąd we
-wstawce `<...>` pokazuje samą wstawkę zamiast miejsca w pliku.
+Kompilator w Zolcie kompiluje sam siebie i wszystkie przykłady. Błąd we wstawce `<...>` pokazuje samą wstawkę
+zamiast miejsca w pliku, a przy literówce w nazwie zmiennej nie podpowiada jeszcze poprawnej.
 
 Jeszcze nie ma:
 - typów parametrów (funkcja, której nikt nie wywołuje, nie jest sprawdzana),

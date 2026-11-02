@@ -3,8 +3,8 @@
 #   etap 0: zolt w Ruście tłumaczy boot/zolt.zt na C   -> zolt0
 #   etap 1: zolt0 tłumaczy boot/zolt.zt                -> zolt1.c -> zolt1
 #   etap 2: zolt1 tłumaczy boot/zolt.zt                -> zolt2.c
-# zolt1.c i zolt2.c muszą być identyczne. Na koniec boot/test.zt
-# z obu kompilatorów (Rust i Zolt) musi wypisać to samo.
+# zolt1.c i zolt2.c muszą być identyczne. Na koniec przykłady i boot/test.zt
+# z obu kompilatorów (Rust i Zolt) muszą wypisać to samo.
 set -eu
 cd "$(dirname "$0")/.."
 out=target/boot
@@ -23,13 +23,17 @@ if ! cmp -s "$out/zolt1.c" "$out/zolt2.c"; then
 fi
 echo "ok: Zolt kompiluje sam siebie ($out/zolt1)"
 
-./target/release/zolt run boot/test.zt > "$out/test-rust.txt"
-"$out/zolt1" boot/test.zt > "$out/test.c"
-$cc "$out/test.c" -lm -o "$out/test"
-"$out/test" > "$out/test-zolt.txt"
-if ! cmp -s "$out/test-rust.txt" "$out/test-zolt.txt"; then
-    echo "błąd: boot/test.zt wypisuje co innego w obu kompilatorach:"
-    diff "$out/test-rust.txt" "$out/test-zolt.txt"
-    exit 1
-fi
-echo "ok: boot/test.zt wypisuje to samo w obu kompilatorach"
+# każdy przykład z obu kompilatorów musi wypisać to samo (kalkulator dostaje 1 + 2)
+for f in examples/*.zt boot/test.zt; do
+    n=$(basename "$f" .zt)
+    printf '1\n+\n2\n' | ./target/release/zolt run "$f" > "$out/$n.rust.txt"
+    "$out/zolt1" "$f" > "$out/$n.c"
+    $cc "$out/$n.c" -lm -o "$out/$n"
+    printf '1\n+\n2\n' | "$out/$n" > "$out/$n.zolt.txt"
+    if ! cmp -s "$out/$n.rust.txt" "$out/$n.zolt.txt"; then
+        echo "błąd: $f wypisuje co innego w obu kompilatorach:"
+        diff "$out/$n.rust.txt" "$out/$n.zolt.txt"
+        exit 1
+    fi
+done
+echo "ok: examples/*.zt i boot/test.zt wypisują to samo w obu kompilatorach"
