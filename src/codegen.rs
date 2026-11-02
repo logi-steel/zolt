@@ -121,12 +121,12 @@ pub fn generate(p: &Program) -> Result<String, Blad> {
     for (i, fs) in cx.tpls.iter().enumerate() {
         let decl: Vec<String> = fs.iter().enumerate().map(|(k, (n, t, _))| format!("{} f{k}_{};", t.c(), ascii(n))).collect();
         c += &format!("\n/* szablon {} */\ntypedef struct {{ {} }} zt_s{i};\n", p.tpls[i].name, decl.join(" "));
-        c += &format!("static void zt_s{i}_print(zt_s{i} v) {{\n    putchar('{{');\n");
+        c += &format!("static void zt_s{i}_print(FILE *f, zt_s{i} v) {{\n    putc('{{', f);\n");
         for (k, (n, t, _)) in fs.iter().enumerate() {
             let label = cstr(&format!("{}{n}: ", if k > 0 { ", " } else { "" }));
-            c += &format!("    fputs({label}, stdout);\n    {}\n", print_c(&format!("v.f{k}_{}", ascii(n)), *t));
+            c += &format!("    fputs({label}, f);\n    {}\n", print_c(&format!("v.f{k}_{}", ascii(n)), *t, "f"));
         }
-        c += "    putchar('}');\n}\n";
+        c += "    putc('}', f);\n}\n";
     }
     c += "\n";
     for x in &cx.inst {
@@ -137,7 +137,7 @@ pub fn generate(p: &Program) -> Result<String, Blad> {
         c += &format!("\n/* fn {}, use => {} */\n", f.name, f.uses.join(", "));
         c += &format!("static {} {}({}) {{\n{}}}\n", x.ret.c(), x.cn, x.sig, x.body);
     }
-    c += &format!("\nint main(void) {{\n    {}();\n    return 0;\n}}\n", cx.inst[mi].cn);
+    c += &format!("\nint main(int argc, char **argv) {{\n    zt_argc = argc;\n    zt_argv = argv;\n    {}();\n    return 0;\n}}\n", cx.inst[mi].cn);
     Ok(c)
 }
 
@@ -274,11 +274,17 @@ impl Gen<'_, '_> {
                 self.line(&format!("{tc} = {vc};"));
             }
             St::Out(e) => {
-                self.print(e)?;
+                self.print(e, "stdout")?;
                 self.line("putchar('\\n');");
             }
+            St::Err(e) => {
+                self.line("fflush(stdout);");
+                self.print(e, "stderr")?;
+                self.line("fputc('\\n', stderr);");
+                self.line("exit(1);");
+            }
             St::Read(e, k) => {
-                self.print(e)?;
+                self.print(e, "stdout")?;
                 self.line("putchar(' ');");
                 self.line(&format!("zt_rd[{k}] = zt_readline();"));
             }
@@ -536,20 +542,20 @@ impl Gen<'_, '_> {
         Ok((format!("{}({})", self.cx.inst[i].cn, cs.join(", ")), self.cx.inst[i].ret))
     }
 
-    fn print(&mut self, e: &E) -> Result<(), Blad> {
-        let Ex::Str(parts) = &e.ex else { return self.print_val(e) };
+    fn print(&mut self, e: &E, f: &str) -> Result<(), Blad> {
+        let Ex::Str(parts) = &e.ex else { return self.print_val(e, f) };
         for p in parts {
             match p {
-                Part::Lit(s) => self.line(&format!("fputs({}, stdout);", cstr(s))),
-                Part::Code(c) => self.print_val(c)?,
+                Part::Lit(s) => self.line(&format!("fputs({}, {f});", cstr(s))),
+                Part::Code(c) => self.print_val(c, f)?,
             }
         }
         Ok(())
     }
 
-    fn print_val(&mut self, e: &E) -> Result<(), Blad> {
+    fn print_val(&mut self, e: &E, f: &str) -> Result<(), Blad> {
         let (c, t) = self.expr(e)?;
-        self.line(&print_c(&c, t));
+        self.line(&print_c(&c, t, f));
         Ok(())
     }
 
@@ -577,15 +583,27 @@ impl Gen<'_, '_> {
                 64 => (t.clone(), Ty::Float(64)),
                 n => return Err(e.err(format!("liczby z kropką mają na razie tylko c32 albo c64 (a nie c{n})"))),
             },
+            Ex::Str(parts) if parts.iter().all(|p| matches!(p, Part::Lit(_))) => {
+                let s: String = parts.iter().map(|p| if let Part::Lit(l) = p { l.as_str() } else { "" }).collect();
+                (cstr(&s), Ty::Text)
+            }
+            // tekst ze wstawkami: piszemy go do bufora tak samo jak sys::out na ekran
             Ex::Str(parts) => {
-                let mut s = String::new();
+                self.n += 1;
+                let k = self.n;
+                let f = format!("zt_f{k}");
+                let mut s = format!("({{ char *zt_b{k}; size_t zt_n{k}; FILE *{f} = open_memstream(&zt_b{k}, &zt_n{k}); ");
                 for p in parts {
                     match p {
-                        Part::Lit(l) => s += l,
-                        Part::Code(c) => return Err(c.err("wstawki `<...>` działają na razie tylko w sys::out i sys::read")),
+                        Part::Lit(l) => s += &format!("fputs({}, {f}); ", cstr(l)),
+                        Part::Code(c) => {
+                            let (cc, t) = self.expr(c)?;
+                            s += &print_c(&cc, t, &f);
+                            s += " ";
+                        }
                     }
                 }
-                (cstr(&s), Ty::Text)
+                (s + &format!("fclose({f}); (const char *)zt_b{k}; }})"), Ty::Text)
             }
             Ex::Bool(b) => (b.to_string(), Ty::Bool),
             Ex::Var(n) => match self.find(n) {
@@ -593,6 +611,25 @@ impl Gen<'_, '_> {
                 None => return Err(e.err(self.unknown(n))),
             },
             Ex::Read(k) => (format!("zt_rd[{k}]"), Ty::Text),
+            Ex::Arg(k) => (format!("zt_arg({k})"), Ty::Text),
+            Ex::File(n) => {
+                let (nc, nt) = self.expr(n)?;
+                if nt != Ty::Text {
+                    return Err(n.err(format!("`sys::file` potrzebuje nazwy pliku (tekstu), a tu jest {}", nt.name())));
+                }
+                (format!("zt_file({nc})"), Ty::Text)
+            }
+            Ex::At(b, i) => {
+                let (bc, bt) = self.expr(b)?;
+                if bt != Ty::Text {
+                    return Err(e.err(format!("`.at` działa na tekście, a tu jest {}", bt.name())));
+                }
+                let (ic, it) = self.expr(i)?;
+                if !matches!(it, Ty::Int(_)) {
+                    return Err(i.err(format!("po `.at` powinien być numer znaku (liczba całkowita), a jest {}", it.name())));
+                }
+                (format!("zt_at({bc}, (int64_t)({ic}))"), Ty::Text)
+            }
             Ex::Inf(k) => (format!("zt_inf{k}"), Ty::Int(64)),
             Ex::Neg(x) => {
                 let (c, t) = self.num(x)?;
@@ -634,6 +671,12 @@ impl Gen<'_, '_> {
             }
             Ex::Field(b, f) => {
                 let (bc, bt) = self.expr(b)?;
+                if bt == Ty::Text {
+                    if f != "len" {
+                        return Err(e.err(format!("tekst nie ma `.{f}` (ma `.len` i `.at`)")));
+                    }
+                    return Ok((format!("zt_len({bc})"), Ty::Int(64)));
+                }
                 let Ty::Obj(ti) = bt else {
                     return Err(b.err(format!("`.{f}` działa na obiektach z szablonu, a tu jest {}", bt.name())));
                 };
@@ -707,16 +750,17 @@ impl Gen<'_, '_> {
     }
 }
 
-fn print_c(c: &str, t: Ty) -> String {
+// wypisanie wartości do strumienia f (stdout albo bufor tekstu ze wstawkami)
+fn print_c(c: &str, t: Ty, f: &str) -> String {
     match t {
-        Ty::Int(n) if n <= 64 => format!("printf(\"%lld\", (long long)({c}));"),
-        Ty::Int(_) => format!("zt_pi128((__int128)({c}));"),
-        Ty::Float(32) => format!("printf(\"%.7g\", (double)({c}));"),
-        Ty::Float(_) => format!("printf(\"%.15g\", {c});"),
-        Ty::Text => format!("fputs({c}, stdout);"),
-        Ty::Bool => format!("fputs(({c}) ? \"true\" : \"false\", stdout);"),
-        Ty::List => format!("zt_lst_print({c});"),
-        Ty::Obj(i) => format!("zt_s{i}_print({c});"),
+        Ty::Int(n) if n <= 64 => format!("fprintf({f}, \"%lld\", (long long)({c}));"),
+        Ty::Int(_) => format!("zt_pi128({f}, (__int128)({c}));"),
+        Ty::Float(32) => format!("fprintf({f}, \"%.7g\", (double)({c}));"),
+        Ty::Float(_) => format!("fprintf({f}, \"%.15g\", {c});"),
+        Ty::Text => format!("fputs({c}, {f});"),
+        Ty::Bool => format!("fputs(({c}) ? \"true\" : \"false\", {f});"),
+        Ty::List => format!("zt_lst_print({f}, {c});"),
+        Ty::Obj(i) => format!("zt_s{i}_print({f}, {c});"),
     }
 }
 

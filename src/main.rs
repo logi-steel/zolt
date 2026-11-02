@@ -26,7 +26,7 @@ impl Blad {
     }
 }
 
-const UZYCIE: &str = "użycie: zolt run plik.zt | zolt build plik.zt | zolt c plik.zt | zolt lsp";
+const UZYCIE: &str = "użycie: zolt run plik.zt [argumenty] | zolt build plik.zt | zolt c plik.zt | zolt lsp";
 
 pub fn sprawdz(src: &str) -> Result<String, Blad> {
     parser::parse(src).and_then(|p| codegen::generate(&p))
@@ -38,7 +38,7 @@ fn main() {
         lsp::run();
         return;
     }
-    if a.len() != 3 {
+    if a.len() < 3 || (a.len() > 3 && a[1] != "run") {
         eprintln!("{UZYCIE}");
         exit(2);
     }
@@ -66,7 +66,7 @@ fn main() {
             fs::create_dir_all(&dir).expect("zolt: nie mogę utworzyć katalogu tymczasowego");
             let bin = dir.join("prog");
             kompiluj(&c, &bin);
-            let st = Command::new(&bin).status();
+            let st = Command::new(&bin).args(&a[3..]).status();
             let _ = fs::remove_dir_all(&dir);
             exit(st.ok().and_then(|s| s.code()).unwrap_or(1));
         }

@@ -33,6 +33,9 @@ pub enum Ex {
     Bool(bool),
     Var(String),
     Read(usize), // sys::read1
+    Arg(usize),  // sys::arg1
+    File(Box<E>), // sys::file("plik")
+    At(Box<E>, Box<E>), // kod.at i
     Inf(usize),  // loop.inf.1
     Neg(Box<E>),
     Bin(Op, Box<E>, Box<E>),
@@ -72,6 +75,7 @@ pub enum St {
     Let { name: String, mutable: bool, val: E, line: usize, col: usize },
     Set { target: E, val: E },
     Out(E),
+    Err(E), // sys::err: komunikat i koniec programu
     Read(E, usize),
     If(Vec<Arm>),
     Loop(LoopKind, Vec<St>),
@@ -312,7 +316,9 @@ impl Parser {
             self.next();
             let (line, col) = self.pos();
             let f = self.ident("nazwa pola")?;
-            e = if self.eat(&Tok::LParen) {
+            e = if f == "at" {
+                E { ex: Ex::At(Box::new(e), Box::new(self.unary()?)), line, col }
+            } else if self.eat(&Tok::LParen) {
                 E { ex: Ex::MCall(Box::new(e), f, self.args()?), line, col }
             } else {
                 E { ex: Ex::Field(Box::new(e), f), line, col }
@@ -602,14 +608,16 @@ impl Parser {
         if ns != "sys" {
             return Err(Blad::new(l, c, format!("nie znam `{ns}::{f}`, czy chodziło o `sys::{f}`?")));
         }
-        if f != "out" && f != "read" {
-            return Err(Blad::new(l, c, format!("nie znam `sys::{f}` (są: sys::out, sys::read)")));
+        if !["out", "read", "err"].contains(&f.as_str()) {
+            return Err(Blad::new(l, c, format!("nie znam `sys::{f}` (są: sys::out, sys::read, sys::err)")));
         }
         self.expect(Tok::LParen, "`(`")?;
         let arg = self.expr()?;
         self.expect(Tok::RParen, "`)`")?;
         if f == "out" {
             Ok(St::Out(arg))
+        } else if f == "err" {
+            Ok(St::Err(arg))
         } else {
             self.reads += 1;
             Ok(St::Read(arg, self.reads))
@@ -752,7 +760,7 @@ impl Parser {
                         StrPart::Code(code, l, c) => Part::Code(self.sub(&code, l, c)?),
                     });
                 }
-                mk(Ex::Str(v))
+                self.postfix(E { ex: Ex::Str(v), line, col })
             }
             Tok::LParen => {
                 let e = self.expr()?;
@@ -776,13 +784,29 @@ impl Parser {
                     self.expect(Tok::Path, "`::`")?;
                     let (l, c) = self.pos();
                     let f = self.ident("np. `read1`")?;
-                    let Some(n) = f.strip_prefix("read").and_then(|n| n.parse::<usize>().ok()).filter(|&n| n >= 1) else {
-                        return Err(Blad::new(l, c, format!("w wartości z `sys::` są tylko odczyty `sys::read1`, `sys::read2`, ... (a nie `sys::{f}`)")));
+                    let num = |pre: &str| f.strip_prefix(pre).and_then(|n| n.parse::<usize>().ok()).filter(|&n| n >= 1);
+                    let ex = if f == "file" {
+                        self.needs("std::io", "`sys::file`")?;
+                        self.expect(Tok::LParen, "`(` (np. `sys::file(\"plik.zt\")`)")?;
+                        let name = self.expr()?;
+                        self.expect(Tok::RParen, "`)`")?;
+                        Ex::File(Box::new(name))
+                    } else if let Some(n) = num("arg") {
+                        self.needs("std::io", "`sys::arg1`, `sys::arg2`, ...")?;
+                        Ex::Arg(n)
+                    } else if let Some(n) = num("read") {
+                        if n > self.reads {
+                            return Err(Blad::new(l, c, format!("`sys::read{n}` jeszcze nie istnieje, do tej pory było {} `sys::read(...)`", self.reads)));
+                        }
+                        Ex::Read(n)
+                    } else {
+                        return Err(Blad::new(
+                            l,
+                            c,
+                            format!("w wartości z `sys::` są: `sys::read1`, ..., `sys::arg1`, ... i `sys::file(\"plik\")` (a nie `sys::{f}`)"),
+                        ));
                     };
-                    if n > self.reads {
-                        return Err(Blad::new(l, c, format!("`sys::read{n}` jeszcze nie istnieje, do tej pory było {} `sys::read(...)`", self.reads)));
-                    }
-                    mk(Ex::Read(n))
+                    self.postfix(E { ex, line, col })
                 }
                 "loop" => {
                     self.expect(Tok::Dot, "`.`")?;
@@ -804,7 +828,8 @@ impl Parser {
                 k if KEYWORDS.contains(&k) => Err(Blad::new(line, col, format!("`{k}` to słowo kluczowe, tu powinna być wartość"))),
                 _ if *self.peek() == Tok::LParen => {
                     self.next();
-                    mk(Ex::Call(s.clone(), self.args()?))
+                    let e = E { ex: Ex::Call(s.clone(), self.args()?), line, col };
+                    self.postfix(e)
                 }
                 _ => {
                     let name = self.obj_num(s.clone());

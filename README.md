@@ -31,7 +31,7 @@ cargo build --release
 
 | komenda | co robi |
 |---|---|
-| `zolt run plik.zt` | kompiluje i uruchamia |
+| `zolt run plik.zt [argumenty]` | kompiluje i uruchamia (argumenty dostaje program) |
 | `zolt build plik.zt` | tworzy plik wykonywalny |
 | `zolt c plik.zt` | pokazuje wygenerowany kod C |
 | `zolt lsp` | serwer języka dla edytora (błędy na bieżąco) |
@@ -45,7 +45,8 @@ cargo build --release
 **Liczby z rozmiarem.** `c8_100`, `c128_...`: całkowite od `c1` do `c128` bitów. `c32_3.14`, `c64_...`: ułamki.
 Prawda i fałsz: `b.true`, `b.false`.
 
-**Tekst.** Wstawki w `< >`: `sys::out("wynik: <x>")`.
+**Tekst.** Wstawki w `< >` działają w każdym tekście: `sys::out("wynik: <x>")`, `let t : "<a><b>"`.
+`t.len` to liczba znaków, `t.at 2` to drugi znak (liczymy od 1).
 `sys::read("pytanie?")` zadaje pytanie, a kolejne odpowiedzi to `sys::read1`, `sys::read2`… Działanie
 może też przyjść z wejścia: `a <>sys::read2<> b`.
 
@@ -90,18 +91,46 @@ fn main (use => std::io) {
 }
 ```
 
-**`use =>`.** `std::io` daje `sys::out` i `sys::read`, `std::loops` daje `loop.`, `std::lists` daje listy.
+**Pliki i argumenty.** `sys::file("plik.zt")` daje cały plik jako tekst. `sys::arg1`, `sys::arg2`… to słowa
+po nazwie programu (`./prog a b`), a gdy ich brak, pusty tekst. `sys::err("...")` wypisuje błąd i kończy
+program.
+
+**`use =>`.** `std::io` daje `sys::out`, `sys::read`, `sys::err`, `sys::file` i `sys::arg1`, `std::loops` daje `loop.`, `std::lists` daje listy.
 
 Więcej w `examples/`.
+
+## Zolt w Zolcie
+
+`boot/zolt.zt` to kompilator Zolta napisany w Zolcie. Umie tyle języka, ile sam używa: funkcje z pożyczkami,
+`let`, `if`, `while`, `loop,end`, `retrn`, tekst ze wstawkami, `.len`, `.at`, `sys::out`, `sys::err`,
+`sys::file` i `sys::arg1`. Typy sprawdza dopiero uruchomiony program, bo w C każda wartość to `zv` z
+`boot/zrt.h`.
+
+```
+boot/bootstrap.sh
+```
+
+Skrypt tłumaczy `zolt.zt` kompilatorem w Ruście, a powstały program tłumaczy `zolt.zt` jeszcze raz.
+Oba wyniki muszą być identyczne. Na koniec `boot/test.zt` musi wypisać to samo z obu kompilatorów.
+
+Ręcznie, po bootstrapie:
+
+```
+target/boot/zolt1 plik.zt > plik.c
+cc -std=gnu23 -fwrapv -I boot plik.c -lm -o plik
+```
 
 ## Edytor
 
 Helix: `editors/helix/zainstaluj.sh` instaluje `zolt` (z serwerem języka), gramatykę tree-sitter
 i kolorowanie. Skrypt trzeba uruchomić ponownie po każdej zmianie kompilatora albo gramatyki.
 
-## Stan (2026-11-01)
+## Stan (2026-11-02)
 
 Działa wszystko z listy wyżej, z podpowiedziami przy literówkach.
+
+Kompilator w Zolcie kompiluje sam siebie. Nie zna jeszcze list, obiektów, `loop.` i `sys::read`, a błąd we
+wstawce `<...>` pokazuje samą wstawkę zamiast miejsca w pliku.
 
 Jeszcze nie ma:
 - typów parametrów (funkcja, której nikt nie wywołuje, nie jest sprawdzana),

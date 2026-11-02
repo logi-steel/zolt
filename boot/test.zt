@@ -1,0 +1,79 @@
+__ Wszystko, co umie boot/zolt.zt. boot/bootstrap.sh sprawdza, że oba
+   kompilatory (Rust i Zolt) wypisują tu to samo. __
+
+fn main (use => std::io) {
+    __ liczby __
+    let a : 7
+    let &_b : 2
+    b : b * 3 - 1
+    sys::out("<a + b> <a - b> <a * b> <a / b> <a % b> <-a> <-(a - 10)>")
+    sys::out("<7.5 / 2> <1.0 + 2> <10 % 3.5>")
+
+    __ tekst: wstawki, znaki specjalne, .len i .at __
+    let imie : "Żaneta"
+    let &_napis : "<imie> ma <imie.len> liter"
+    napis : "<napis>, pierwsza to <imie.at 1>, ostatnia <imie.at imie.len>"
+    sys::out(napis)
+    sys::out("cudzysłów \", ukośnik \\, nawias \<x>, tab[\t], 3 \< 5")
+    let liczba : "17"
+    sys::out("tekst w rachunku: <liczba + 1>")
+
+    __ porównania i warunki __
+    if "abc" < "abd" { sys::out("abc przed abd") }
+    if a = 7 {
+        sys::out("a to 7")
+    } elseif a > 7 {
+        sys::out("a duże")
+    } else {
+        sys::out("a małe")
+    }
+    if b.true = true { sys::out("b.true działa") }
+    if 2 >= 2.0 { sys::out("2 >= 2.0") }
+
+    __ pętle __
+    let &_i : 0
+    let &_suma : 0
+    while true {
+        i : i + 1
+        if i > 100 { loop,end }
+        if i % 2 = 0 { suma : suma + i }
+    }
+    sys::out("suma parzystych do 100: <suma>")
+
+    __ funkcje, rekurencja i pożyczki __
+    sys::out("silnia(10) = <silnia(10)>, fib(15) = <fib(15)>")
+    let &_licznik : 0
+    dodaj(&_licznik, 5)
+    dodaj(&_licznik, 2)
+    pokaz(&licznik)
+    sys::out("odwrócone: <odwroc(imie)>")
+    sys::out("argument 1: [<sys::arg1>]")
+}
+
+fn silnia (n) {
+    if n < 2 { retrn 1 }
+    retrn n * silnia(n - 1)
+}
+
+fn fib (n) {
+    if n < 2 { retrn n }
+    retrn fib(n - 1) + fib(n - 2)
+}
+
+fn dodaj (&_x, ile) {
+    x : x + ile
+}
+
+fn pokaz (&x use => std::io) {
+    sys::out("licznik = <x>")
+}
+
+fn odwroc (t) {
+    let &_w : ""
+    let &_k : t.len
+    while k >= 1 {
+        w : "<w><t.at k>"
+        k : k - 1
+    }
+    retrn w
+}

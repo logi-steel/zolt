@@ -1,0 +1,898 @@
+__ This program is free software. It comes without any warranty, to
+   the extent permitted by applicable law. You can redistribute it
+   and/or modify it under the terms of the Do What The Fuck You Want
+   To Public License, Version 2, as published by Sam Hocevar. See
+   http://www.wtfpl.net/ for more details. __
+
+__ Kompilator Zolta napisany w Zolcie.
+
+   Czyta plik .zt i wypisuje kod C, który dołącza boot/zrt.h:
+       zolt plik.zt > plik.c
+       cc -std=gnu23 -fwrapv -I boot plik.c -lm -o plik
+
+   W C każda wartość to `zv` (liczba, ułamek, tekst albo prawda/fałsz),
+   więc typy sprawdza dopiero uruchomiony program.
+
+   Umie tyle Zolta, ile sam używa: funkcje z pożyczkami, let, if, while,
+   loop,end, retrn, tekst ze wstawkami, .len, .at, sys::out, sys::err,
+   sys::file i sys::arg1.
+
+   Kod czytamy wprost z tekstu: `i` to numer znaku, od którego zaczyna się
+   następne słowo (token). Tabele to też zwykłe teksty:
+       fns   funkcje         |nazwa:rodzaje|   rodzaj parametru: v wartość, r &x, w &_x
+       tab   zmienne         |nazwa=rodzaj|    c stała, m &_zmienna, v/r/w parametr
+                                               # zaczyna nowy blok
+       uses  use => ...      |std::io|                                              __
+
+fn main (use => std::io) {
+    let plik : sys::arg1
+    if plik = "" { sys::err("użycie: zolt plik.zt > plik.c") }
+    let kod : sys::file(plik)
+    sys::out("/* wygenerowane przez boot/zolt.zt */")
+    sys::out("#include \"zrt.h\"")
+    sys::out("")
+
+    __ 1. przebieg: same nagłówki, bo C musi znać funkcje przed użyciem __
+    let &_i : 1
+    let &_fns : "|"
+    while nie(zajrzyj(kod, i) = "") {
+        naglowek_funkcji(kod, &_i, &_fns)
+    }
+    if szukaj(fns, "|main:") = 0 { blad(kod, 1, "brakuje `fn main () { ... }`") }
+
+    __ 2. przebieg: ciała funkcji __
+    i : 1
+    while nie(zajrzyj(kod, i) = "") {
+        funkcja(kod, &_i, fns)
+    }
+    sys::out("")
+    sys::out("int main(int argc, char **argv) {")
+    sys::out("    zargc = argc;")
+    sys::out("    zargv = argv;")
+    sys::out("    f_main();")
+    sys::out("    return 0;")
+    sys::out("}")
+}
+
+__ ---------- funkcje ---------- __
+
+fn naglowek_funkcji (kod, &_i, &_fns use => std::io) {
+    oczekuj(kod, &_i, "fn", "`fn nazwa (...) {` (tu powinna zacząć się funkcja)")
+    let p : start_tokenu(kod, i)
+    let nazwa : nazwa_tokenu(kod, &_i, "nazwa funkcji")
+    if slowo_kluczowe(nazwa) { blad(kod, p, "`<nazwa>` to słowo kluczowe, nie może być nazwą funkcji") }
+    if szukaj(fns, "|<nazwa>:") > 0 { blad(kod, p, "funkcja `<nazwa>` już jest") }
+    let &_rodzaje : ""
+    let &_sig : ""
+    let &_tab : ""
+    let &_uses : "|"
+    parametry(kod, &_i, &_rodzaje, &_sig, &_tab, &_uses)
+    if nazwa = "main" {
+        if nie(rodzaje = "") { blad(kod, p, "`main` nie bierze parametrów") }
+    }
+    fns : "<fns><nazwa>:<rodzaje>|"
+    sys::out("static zv f_<nazwa>(<sig>);")
+    pomin_blok(kod, &_i)
+}
+
+fn pomin_blok (kod, &_i) {
+    let p : start_tokenu(kod, i)
+    oczekuj(kod, &_i, "{", "`{`")
+    let &_glebokosc : 1
+    while glebokosc > 0 {
+        let t : nastepny(kod, &_i)
+        if t = "{" { glebokosc : glebokosc + 1 }
+        elseif t = "}" { glebokosc : glebokosc - 1 }
+        elseif t = "" { blad(kod, p, "ten `{` nie ma zamykającego `}`") }
+    }
+}
+
+__ (a, &b, &_c use => std::io): rodzaje "vrw", nagłówek C, zmienne i biblioteki __
+fn parametry (kod, &_i, &_rodzaje, &_sig, &_tab, &_uses) {
+    oczekuj(kod, &_i, "(", "`(`")
+    let &_dalej : true
+    while dalej {
+        let t : zajrzyj(kod, i)
+        if t = ")" { dalej : false }
+        elseif t = "use" { dalej : false }
+        else {
+            let &_rodzaj : "v"
+            if t = "&" { rodzaj : "r" }
+            if t = "&_" { rodzaj : "w" }
+            if nie(rodzaj = "v") { nastepny(kod, &_i) }
+            let p : start_tokenu(kod, i)
+            let nazwa : nazwa_tokenu(kod, &_i, "nazwa parametru albo `use => ...`")
+            if slowo_kluczowe(nazwa) { blad(kod, p, "`<nazwa>` to słowo kluczowe, nie może być nazwą parametru") }
+            if zajrzyj(kod, i) = "." { blad(kod, p, "listy jako parametry jeszcze nie działają w tym kompilatorze") }
+            if szukaj(tab, "|<nazwa>=") > 0 { blad(kod, p, "parametr `<nazwa>` już jest") }
+            rodzaje : "<rodzaje><rodzaj>"
+            tab : "<tab>|<nazwa>=<rodzaj>|"
+            let &_c : "zv z_<nazwa>"
+            if nie(rodzaj = "v") { c : "zv *z_<nazwa>" }
+            if sig = "" { sig : c } else { sig : "<sig>, <c>" }
+            let po : zajrzyj(kod, i)
+            if po = "," { nastepny(kod, &_i) }
+            elseif po = ")" {}
+            elseif po = "use" {}
+            else { blad(kod, start_tokenu(kod, i), "parametry oddzielamy przecinkiem, np. `fn dodaj (a, b, use => std::io)`") }
+        }
+    }
+    if sig = "" { sig : "void" }
+    if zajrzyj(kod, i) = "use" {
+        nastepny(kod, &_i)
+        oczekuj(kod, &_i, "=>", "`=>` (np. `use => std::io`)")
+        while nie(zajrzyj(kod, i) = ")") {
+            let &_sciezka : nazwa_tokenu(kod, &_i, "ścieżka biblioteki, np. `std::io`")
+            while zajrzyj(kod, i) = "::" {
+                nastepny(kod, &_i)
+                let dalsza : nazwa_tokenu(kod, &_i, "nazwa po `::`")
+                sciezka : "<sciezka>::<dalsza>"
+            }
+            uses : "<uses><sciezka>|"
+            if zajrzyj(kod, i) = "," { nastepny(kod, &_i) }
+        }
+    }
+    oczekuj(kod, &_i, ")", "`)`")
+}
+
+fn funkcja (kod, &_i, fns use => std::io) {
+    nastepny(kod, &_i)
+    let nazwa : nastepny(kod, &_i)
+    let &_rodzaje : ""
+    let &_sig : ""
+    let &_tab : ""
+    let &_uses : "|"
+    parametry(kod, &_i, &_rodzaje, &_sig, &_tab, &_uses)
+    sys::out("")
+    sys::out("static zv f_<nazwa>(<sig>) {")
+    __ parametry i ciało to w C jeden blok, więc # stoi przed parametrami __
+    blok(kod, &_i, fns, uses, "#<tab>", "    ")
+    sys::out("    return znic();")
+    sys::out("}")
+}
+
+__ ---------- instrukcje (wypisują C od razu) ---------- __
+
+fn blok (kod, &_i, fns, uses, tab, wc use => std::io) {
+    oczekuj(kod, &_i, "{", "`{`")
+    let &_t : tab
+    while nie(zajrzyj(kod, i) = "}") {
+        if zajrzyj(kod, i) = "" { blad(kod, i, "brakuje zamykającego `}`") }
+        instrukcja(kod, &_i, fns, uses, &_t, wc)
+    }
+    nastepny(kod, &_i)
+}
+
+fn instrukcja (kod, &_i, fns, uses, &_tab, wc use => std::io) {
+    let p : start_tokenu(kod, i)
+    let t : zajrzyj(kod, i)
+    let t2 : zajrzyj2(kod, i)
+    if t = "let" {
+        nastepny(kod, &_i)
+        let &_rodzaj : "c"
+        if zajrzyj(kod, i) = "&" {
+            blad(kod, start_tokenu(kod, i), "zmienną do zmieniania piszesz `let &_x`; samo `&x` to pożyczka w wywołaniu funkcji")
+        }
+        if zajrzyj(kod, i) = "&_" {
+            nastepny(kod, &_i)
+            rodzaj : "m"
+        }
+        let pn : start_tokenu(kod, i)
+        let nazwa : nazwa_tokenu(kod, &_i, "nazwa zmiennej")
+        if slowo_kluczowe(nazwa) { blad(kod, pn, "`<nazwa>` to słowo kluczowe, nie może być nazwą zmiennej") }
+        if zajrzyj(kod, i) = "." { blad(kod, pn, "listy i obiekty jeszcze nie działają w tym kompilatorze") }
+        if zajrzyj(kod, i) = "=" { blad(kod, start_tokenu(kod, i), "w Zolt przypisujemy dwukropkiem: `let x : 12` (`=` porównuje)") }
+        oczekuj(kod, &_i, ":", "`:` i wartość, np. `let x : 12`")
+        let w : wyrazenie(kod, &_i, fns, uses, tab)
+        if w_bloku(tab, nazwa) { blad(kod, pn, "`<nazwa>` już istnieje w tym bloku") }
+        tab : "<tab>|<nazwa>=<rodzaj>|"
+        sys::out("<wc>zv z_<nazwa> = <w>;")
+    } elseif t = "if" {
+        warunek(kod, &_i, fns, uses, tab, wc)
+    } elseif t = "while" {
+        nastepny(kod, &_i)
+        let w : wyrazenie(kod, &_i, fns, uses, tab)
+        sys::out("<wc>while (ztak(<w>)) {")
+        blok(kod, &_i, fns, uses, "<tab>#", "<wc>    ")
+        sys::out("<wc>}")
+    } elseif t = "retrn" {
+        nastepny(kod, &_i)
+        let s : start_tokenu(kod, i)
+        let nt : zajrzyj(kod, i)
+        __ wartość tylko w tej samej linii, bo `retrn` może też stać sam __
+        if nowa_linia(kod, p, s) { sys::out("<wc>return znic();") }
+        elseif nt = "}" { sys::out("<wc>return znic();") }
+        elseif nt = "" { sys::out("<wc>return znic();") }
+        else {
+            let w : wyrazenie(kod, &_i, fns, uses, tab)
+            sys::out("<wc>return <w>;")
+        }
+    } elseif t = "loop" {
+        if nie(t2 = ",") { blad(kod, p, "pętle `loop.` jeszcze nie działają w tym kompilatorze (jest `while`)") }
+        nastepny(kod, &_i)
+        nastepny(kod, &_i)
+        if nie(nastepny(kod, &_i) = "end") { blad(kod, p, "wyjście z pętli to `loop,end`") }
+        sys::out("<wc>break;")
+    } elseif t = "sys" {
+        sys_instrukcja(kod, &_i, fns, uses, tab, wc)
+    } elseif t = "std" {
+        sys_instrukcja(kod, &_i, fns, uses, tab, wc)
+    } elseif t = "else" {
+        blad(kod, p, "`else` bez `if` przed nim")
+    } elseif t = "elseif" {
+        blad(kod, p, "`elseif` bez `if` przed nim")
+    } elseif t2 = "(" {
+        let nazwa : nazwa_tokenu(kod, &_i, "nazwa funkcji")
+        let w : wywolanie(kod, &_i, p, nazwa, fns, uses, tab)
+        sys::out("<wc><w>;")
+    } elseif t2 = ":" {
+        let nazwa : nazwa_tokenu(kod, &_i, "nazwa zmiennej")
+        nastepny(kod, &_i)
+        let r : rodzaj_zmiennej(tab, nazwa)
+        if r = "" { blad(kod, p, "nie znam zmiennej `<nazwa>`") }
+        if nie(zmienna_do_zmian(r)) { blad(kod, p, "`<nazwa>` jest stała; żeby ją zmieniać, zadeklaruj ją jako `let &_<nazwa>`") }
+        let w : wyrazenie(kod, &_i, fns, uses, tab)
+        sys::out("<wc><zmienna_c(nazwa, r)> = <w>;")
+    } elseif t2 = "=" {
+        blad(kod, p, "zmianę wartości piszemy `x : nowa` (`=` porównuje)")
+    } elseif t2 = "." {
+        blad(kod, p, "listy i obiekty jeszcze nie działają w tym kompilatorze")
+    } else {
+        blad(kod, p, "tu powinna zacząć się instrukcja (let, if, while, sys::out, ...)")
+    }
+}
+
+fn warunek (kod, &_i, fns, uses, tab, wc use => std::io) {
+    nastepny(kod, &_i)
+    let w : wyrazenie(kod, &_i, fns, uses, tab)
+    if zajrzyj(kod, i) = "loop" { blad(kod, start_tokenu(kod, i), "`if ... loop.` jeszcze nie działa w tym kompilatorze") }
+    sys::out("<wc>if (ztak(<w>)) {")
+    blok(kod, &_i, fns, uses, "<tab>#", "<wc>    ")
+    let &_dalej : true
+    while dalej {
+        let p : start_tokenu(kod, i)
+        let t : zajrzyj(kod, i)
+        if t = "elseif" {
+            nastepny(kod, &_i)
+            if zajrzyj(kod, i) = "{" { blad(kod, p, "`elseif` potrzebuje warunku; bez warunku pisz `else`") }
+            let w2 : wyrazenie(kod, &_i, fns, uses, tab)
+            sys::out("<wc>} else if (ztak(<w2>)) {")
+            blok(kod, &_i, fns, uses, "<tab>#", "<wc>    ")
+        } elseif t = "else" {
+            nastepny(kod, &_i)
+            if zajrzyj(kod, i) = "if" { blad(kod, p, "w Zolt `else if` piszemy razem: `elseif`") }
+            sys::out("<wc>} else {")
+            blok(kod, &_i, fns, uses, "<tab>#", "<wc>    ")
+            dalej : false
+        } else {
+            dalej : false
+        }
+    }
+    sys::out("<wc>}")
+}
+
+fn sys_instrukcja (kod, &_i, fns, uses, tab, wc use => std::io) {
+    let p : start_tokenu(kod, i)
+    potrzebuje(kod, p, uses, "std::io", "`sys::out` i `sys::err`")
+    let ns : nastepny(kod, &_i)
+    oczekuj(kod, &_i, "::", "`::`")
+    let pf : start_tokenu(kod, i)
+    let f : nazwa_tokenu(kod, &_i, "nazwa funkcji, np. `out`")
+    if nie(ns = "sys") { blad(kod, pf, "nie znam `<ns>::<f>`, czy chodziło o `sys::<f>`?") }
+    let &_c : ""
+    if f = "out" { c : "zout" }
+    elseif f = "err" { c : "zerr" }
+    elseif f = "read" { blad(kod, pf, "`sys::read` jeszcze nie działa w tym kompilatorze") }
+    else { blad(kod, pf, "nie znam `sys::<f>` (są: sys::out, sys::err)") }
+    oczekuj(kod, &_i, "(", "`(`")
+    let w : wyrazenie(kod, &_i, fns, uses, tab)
+    oczekuj(kod, &_i, ")", "`)`")
+    sys::out("<wc><c>(<w>);")
+}
+
+__ ---------- wyrażenia (zwracają kod C) ----------
+   porównanie < + - < * / % < minus < reszta __
+
+fn wyrazenie (kod, &_i, fns, uses, tab use => std::io) {
+    if zajrzyj(kod, i) = "" {
+        blad(kod, i, "nagły koniec pliku")
+        retrn ""
+    }
+    let l : suma(kod, &_i, fns, uses, tab)
+    let p : start_tokenu(kod, i)
+    let t : zajrzyj(kod, i)
+    if t = "has" { blad(kod, p, "`has` (listy) jeszcze nie działa w tym kompilatorze") }
+    if t = "\<>" { blad(kod, p, "działanie z wejścia `\<>op\<>` jeszcze nie działa w tym kompilatorze") }
+    let &_f : ""
+    if t = "=" { f : "zeq" }
+    elseif t = "\<" { f : "zlt" }
+    elseif t = ">" { f : "zgt" }
+    elseif t = "\<=" { f : "zle" }
+    elseif t = ">=" { f : "zge" }
+    if f = "" { retrn l }
+    nastepny(kod, &_i)
+    let r : suma(kod, &_i, fns, uses, tab)
+    retrn "<f>(<l>, <r>)"
+}
+
+fn suma (kod, &_i, fns, uses, tab) {
+    let &_l : iloczyn(kod, &_i, fns, uses, tab)
+    let &_dalej : true
+    while dalej {
+        let t : zajrzyj(kod, i)
+        let &_f : ""
+        if t = "+" { f : "zadd" }
+        elseif t = "-" { f : "zsub" }
+        if f = "" {
+            dalej : false
+        } else {
+            nastepny(kod, &_i)
+            let r : iloczyn(kod, &_i, fns, uses, tab)
+            l : "<f>(<l>, <r>)"
+        }
+    }
+    retrn l
+}
+
+fn iloczyn (kod, &_i, fns, uses, tab) {
+    let &_l : unarny(kod, &_i, fns, uses, tab)
+    let &_dalej : true
+    while dalej {
+        let t : zajrzyj(kod, i)
+        let &_f : ""
+        if t = "*" { f : "zmul" }
+        elseif t = "/" { f : "zdiv" }
+        elseif t = "%" { f : "zmod" }
+        if f = "" {
+            dalej : false
+        } else {
+            nastepny(kod, &_i)
+            let r : unarny(kod, &_i, fns, uses, tab)
+            l : "<f>(<l>, <r>)"
+        }
+    }
+    retrn l
+}
+
+fn unarny (kod, &_i, fns, uses, tab) {
+    if zajrzyj(kod, i) = "" {
+        blad(kod, i, "nagły koniec pliku")
+        retrn ""
+    }
+    if zajrzyj(kod, i) = "-" {
+        nastepny(kod, &_i)
+        let w : unarny(kod, &_i, fns, uses, tab)
+        retrn "zneg(<w>)"
+    }
+    retrn podstawowy(kod, &_i, fns, uses, tab)
+}
+
+fn podstawowy (kod, &_i, fns, uses, tab use => std::io) {
+    let p : start_tokenu(kod, i)
+    let t : nastepny(kod, &_i)
+    if t = "" {
+        blad(kod, p, "nagły koniec pliku")
+        retrn ""
+    }
+    let c : t.at 1
+    if cyfra(c) { retrn liczba_c(t) }
+    if c = "\"" {
+        let w : tekst_c(kod, p, t, fns, uses, tab)
+        retrn postfiks(kod, &_i, fns, uses, tab, w)
+    }
+    if c = "[" { blad(kod, p, "listy jeszcze nie działają w tym kompilatorze") }
+    if t = "(" {
+        let w : wyrazenie(kod, &_i, fns, uses, tab)
+        oczekuj(kod, &_i, ")", "`)`")
+        retrn "(<w>)"
+    }
+    if t = "&" { blad(kod, p, "pożyczkę (`&x`, `&_x`) dajemy tylko jako argument funkcji, np. `dodaj(&_x)`") }
+    if t = "&_" { blad(kod, p, "pożyczkę (`&x`, `&_x`) dajemy tylko jako argument funkcji, np. `dodaj(&_x)`") }
+    if nie(litera(c)) { blad(kod, p, "tu powinna być wartość (liczba, tekst, zmienna)") }
+    if t = "true" { retrn "zb(1)" }
+    if t = "false" { retrn "zb(0)" }
+    if t = "b" {
+        if zajrzyj(kod, i) = "." {
+            let po : zajrzyj2(kod, i)
+            if po = "true" {
+                nastepny(kod, &_i)
+                nastepny(kod, &_i)
+                retrn "zb(1)"
+            }
+            if po = "false" {
+                nastepny(kod, &_i)
+                nastepny(kod, &_i)
+                retrn "zb(0)"
+            }
+        }
+    }
+    if t = "sys" {
+        let w : sys_wartosc(kod, &_i, fns, uses, tab)
+        retrn postfiks(kod, &_i, fns, uses, tab, w)
+    }
+    if t = "loop" { blad(kod, p, "licznik `loop.inf.N` jeszcze nie działa w tym kompilatorze") }
+    if slowo_kluczowe(t) { blad(kod, p, "`<t>` to słowo kluczowe, tu powinna być wartość") }
+    if zajrzyj(kod, i) = "(" {
+        let w : wywolanie(kod, &_i, p, t, fns, uses, tab)
+        retrn postfiks(kod, &_i, fns, uses, tab, w)
+    }
+    if zajrzyj(kod, i) = "." {
+        if zajrzyj2(kod, i) = "lst" { blad(kod, p, "listy jeszcze nie działają w tym kompilatorze") }
+    }
+    let r : rodzaj_zmiennej(tab, t)
+    if r = "" { blad(kod, p, "nie znam zmiennej `<t>`") }
+    retrn postfiks(kod, &_i, fns, uses, tab, zmienna_c(t, r))
+}
+
+__ tekst.len, tekst.at i __
+fn postfiks (kod, &_i, fns, uses, tab, w) {
+    let &_c : w
+    while zajrzyj(kod, i) = "." {
+        nastepny(kod, &_i)
+        let p : start_tokenu(kod, i)
+        let f : nazwa_tokenu(kod, &_i, "nazwa pola")
+        if f = "len" {
+            c : "zlen(<c>)"
+        } elseif f = "at" {
+            let n : unarny(kod, &_i, fns, uses, tab)
+            c : "zat(<c>, <n>)"
+        } else {
+            blad(kod, p, "`.<f>`: tekst ma tylko `.len` i `.at` (obiektów ten kompilator jeszcze nie zna)")
+        }
+    }
+    retrn c
+}
+
+fn sys_wartosc (kod, &_i, fns, uses, tab) {
+    oczekuj(kod, &_i, "::", "`::`")
+    let pf : start_tokenu(kod, i)
+    let f : nazwa_tokenu(kod, &_i, "np. `arg1`")
+    if f = "file" {
+        potrzebuje(kod, pf, uses, "std::io", "`sys::file`")
+        oczekuj(kod, &_i, "(", "`(` (np. `sys::file(\"plik.zt\")`)")
+        let w : wyrazenie(kod, &_i, fns, uses, tab)
+        oczekuj(kod, &_i, ")", "`)`")
+        retrn "zfile(<w>)"
+    }
+    if f.len > 3 {
+        if wytnij(f, 1, 4) = "arg" {
+            let n : wytnij(f, 4, f.len + 1)
+            if same_cyfry(n) {
+                if n + 0 >= 1 {
+                    potrzebuje(kod, pf, uses, "std::io", "`sys::arg1`, `sys::arg2`, ...")
+                    retrn "zarg(<n + 0>)"
+                }
+            }
+        }
+    }
+    if f.len > 4 {
+        if wytnij(f, 1, 5) = "read" { blad(kod, pf, "`sys::read` jeszcze nie działa w tym kompilatorze") }
+    }
+    blad(kod, pf, "w wartości z `sys::` są: `sys::arg1`, ... i `sys::file(\"plik\")` (a nie `sys::<f>`)")
+    retrn ""
+}
+
+__ nazwa(5, &x, &_y): sprawdza liczbę i rodzaj argumentów __
+fn wywolanie (kod, &_i, p, nazwa, fns, uses, tab use => std::io) {
+    let gdzie : szukaj(fns, "|<nazwa>:")
+    if gdzie = 0 {
+        blad(kod, p, "nie ma funkcji `<nazwa>`")
+        retrn ""
+    }
+    let rodzaje : do_kreski(fns, gdzie + nazwa.len + 2)
+    oczekuj(kod, &_i, "(", "`(`")
+    let &_args : ""
+    let &_n : 0
+    let &_pozyczone : "|"
+    while nie(zajrzyj(kod, i) = ")") {
+        n : n + 1
+        let pa : start_tokenu(kod, i)
+        let t : zajrzyj(kod, i)
+        let &_rodzaj : "v"
+        if t = "&" { rodzaj : "r" }
+        if t = "&_" { rodzaj : "w" }
+        let &_a : ""
+        if rodzaj = "v" {
+            a : wyrazenie(kod, &_i, fns, uses, tab)
+        } else {
+            nastepny(kod, &_i)
+            let pn : start_tokenu(kod, i)
+            let x : nazwa_tokenu(kod, &_i, "nazwa zmiennej (pożyczyć można tylko zmienną)")
+            let r : rodzaj_zmiennej(tab, x)
+            if r = "" { blad(kod, pn, "nie znam zmiennej `<x>`") }
+            if rodzaj = "w" {
+                if nie(zmienna_do_zmian(r)) { blad(kod, pn, "`<x>` jest tylko do czytania, więc nie da się jej pożyczyć do zmian (`&_<x>`)") }
+            }
+            __ borrow checker w małym: pożyczka do zmian musi być jedyna __
+            let juz : rodzaj_zmiennej(pozyczone, x)
+            if nie(juz = "") {
+                if juz = "w" { blad(kod, pn, "`<x>` jest już pożyczona w tym wywołaniu, a pożyczka do zmian (`&_`) musi być jedyna") }
+                if rodzaj = "w" { blad(kod, pn, "`<x>` jest już pożyczona w tym wywołaniu, a pożyczka do zmian (`&_`) musi być jedyna") }
+            }
+            pozyczone : "<pozyczone><x>=<rodzaj>|"
+            if r = "r" { a : "z_<x>" }
+            elseif r = "w" { a : "z_<x>" }
+            else { a : "&z_<x>" }
+        }
+        if n <= rodzaje.len {
+            let chce : rodzaje.at n
+            if nie(chce = rodzaj) { blad(kod, pa, "parametr nr <n> w `<nazwa>` chce <opis_rodzaju(chce)>") }
+        }
+        if n > 1 { args : "<args>, <a>" } else { args : a }
+        let po : zajrzyj(kod, i)
+        if po = "," { nastepny(kod, &_i) }
+        elseif nie(po = ")") { blad(kod, start_tokenu(kod, i), "argumenty oddzielamy przecinkiem, a na końcu jest `)`") }
+    }
+    nastepny(kod, &_i)
+    if nie(n = rodzaje.len) { blad(kod, p, "`<nazwa>`: liczba argumentów ma być <rodzaje.len>, a jest <n>") }
+    retrn "f_<nazwa>(<args>)"
+}
+
+fn opis_rodzaju (r) {
+    if r = "r" { retrn "pożyczki do czytania: `&zmienna`" }
+    if r = "w" { retrn "pożyczki do zmian: `&_zmienna`" }
+    retrn "zwykłej wartości (bez `&`)"
+}
+
+__ "a <x> b" -> zcat(3, (zv[]){zs("a "), z_x, zs(" b")}); p to miejsce tekstu w kodzie __
+fn tekst_c (kod, p, t, fns, uses, tab) {
+    let &_czesci : ""
+    let &_n : 0
+    let &_lit : ""
+    let &_k : 2
+    while k < t.len {
+        let c : t.at k
+        if c = "\\" {
+            let e : t.at (k + 1)
+            if e = "n" { lit : "<lit>\\n" }
+            elseif e = "t" { lit : "<lit>\\t" }
+            elseif e = "\"" { lit : "<lit>\\\"" }
+            elseif e = "\\" { lit : "<lit>\\\\" }
+            elseif e = "\<" { lit : "<lit>\<" }
+            elseif e = ">" { lit : "<lit>>" }
+            else { blad(kod, p + k - 1, "nie znam znaku specjalnego `\\<e>`") }
+            k : k + 2
+        } elseif c = "\<" {
+            __ wstawka: kod do najbliższego > (lexer sprawdził, że jest) __
+            let &_j : k + 1
+            while nie(t.at j = ">") { j : j + 1 }
+            let w : wstawka(wytnij(t, k + 1, j), kod, p + k - 1, fns, uses, tab)
+            if nie(lit = "") {
+                n : n + 1
+                czesci : "<czesci>zs(\"<lit>\"), "
+                lit : ""
+            }
+            n : n + 1
+            czesci : "<czesci><w>, "
+            k : j + 1
+        } else {
+            if c = "\n" { lit : "<lit>\\n" }
+            elseif c = "\t" { lit : "<lit>\\t" }
+            else { lit : "<lit><c>" }
+            k : k + 1
+        }
+    }
+    if n = 0 { retrn "zs(\"<lit>\")" }
+    if nie(lit = "") {
+        n : n + 1
+        czesci : "<czesci>zs(\"<lit>\"), "
+    }
+    retrn "zcat(<n>, (zv[]){<wytnij(czesci, 1, czesci.len - 1)>})"
+}
+
+__ kod ze wstawki <...> to osobny mały tekst, a błędy w nim pokazujemy w nim samym __
+fn wstawka (w, kod, p, fns, uses, tab) {
+    let &_k : 1
+    if zajrzyj(w, k) = "" { blad(kod, p, "pusta wstawka `\<>` (zwykły znak `\<` to `\\\<`)") }
+    let c : wyrazenie(w, &_k, fns, uses, tab)
+    if nie(zajrzyj(w, k) = "") { blad(w, start_tokenu(w, k), "w `\<...>` może być tylko jedna wartość, np. `\<oki>`") }
+    retrn c
+}
+
+fn liczba_c (t) {
+    if szukaj(t, ".") > 0 { retrn "zf(<t>)" }
+    retrn "zi(<t>)"
+}
+
+__ ---------- zmienne ---------- __
+
+fn rodzaj_zmiennej (tab, n) {
+    let k : ostatnie(tab, "|<n>=")
+    if k = 0 { retrn "" }
+    retrn tab.at (k + n.len + 2)
+}
+
+fn w_bloku (tab, n) {
+    retrn szukaj_od(tab, "|<n>=", ostatnie(tab, "#")) > 0
+}
+
+fn zmienna_do_zmian (r) {
+    if r = "m" { retrn true }
+    retrn r = "w"
+}
+
+fn zmienna_c (n, r) {
+    if r = "r" { retrn "(*z_<n>)" }
+    if r = "w" { retrn "(*z_<n>)" }
+    retrn "z_<n>"
+}
+
+fn potrzebuje (kod, p, uses, lib, co) {
+    if szukaj(uses, "|<lib>|") = 0 { blad(kod, p, "<co> wymagają `use => <lib>` w nawiasie funkcji") }
+}
+
+__ ---------- lexer: kod czytany znak po znaku ---------- __
+
+__ następne słowo (token) i przesunięcie i za nie; na końcu pliku "" __
+fn nastepny (kod, &_i) {
+    let s : start_tokenu(kod, i)
+    if s > kod.len {
+        i : s
+        retrn ""
+    }
+    let e : koniec_tokenu(kod, s)
+    i : e
+    retrn wytnij(kod, s, e)
+}
+
+fn zajrzyj (kod, i) {
+    let &_j : i
+    retrn nastepny(kod, &_j)
+}
+
+fn zajrzyj2 (kod, i) {
+    let &_j : i
+    nastepny(kod, &_j)
+    retrn nastepny(kod, &_j)
+}
+
+fn oczekuj (kod, &_i, t, opis) {
+    let p : start_tokenu(kod, i)
+    if nie(nastepny(kod, &_i) = t) { blad(kod, p, "tu powinno być <opis>") }
+}
+
+fn nazwa_tokenu (kod, &_i, opis) {
+    let p : start_tokenu(kod, i)
+    let t : nastepny(kod, &_i)
+    if t = "" { blad(kod, p, "tu powinna być <opis>") }
+    if nie(litera(t.at 1)) { blad(kod, p, "tu powinna być <opis>") }
+    retrn t
+}
+
+__ pomija spacje i komentarze __
+fn start_tokenu (kod, i) {
+    let &_k : i
+    let n : kod.len
+    while k <= n {
+        if bialy(kod.at k) {
+            k : k + 1
+        } elseif komentarz(kod, k) {
+            let p : k
+            k : k + 2
+            while nie(komentarz(kod, k)) {
+                if k > n { blad(kod, p, "komentarz `__` nie ma zamykającego `__`") }
+                k : k + 1
+            }
+            k : k + 2
+        } else {
+            retrn k
+        }
+    }
+    retrn k
+}
+
+__ miejsce tuż za tokenem, który zaczyna się na s __
+fn koniec_tokenu (kod, s) {
+    let c : kod.at s
+    let &_k : s + 1
+    if cyfra(c) {
+        while cyfra(znak_na(kod, k)) { k : k + 1 }
+        if znak_na(kod, k) = "." {
+            if cyfra(znak_na(kod, k + 1)) {
+                k : k + 1
+                while cyfra(znak_na(kod, k)) { k : k + 1 }
+            }
+        }
+        retrn k
+    }
+    if litera(c) {
+        while dalej_nazwy(kod, k) { k : k + 1 }
+        retrn k
+    }
+    if c = "\"" {
+        while nie(znak_na(kod, k) = "\"") {
+            let z : znak_na(kod, k)
+            if z = "" { blad(kod, s, "tekst nie ma zamykającego `\"`") }
+            if z = "\\" {
+                k : k + 2
+            } elseif z = "\<" {
+                let p : k
+                k : k + 1
+                while nie(znak_na(kod, k) = ">") {
+                    let zw : znak_na(kod, k)
+                    if zw = "" { blad(kod, p, "`\<` w tekście otwiera wstawkę, ale brak `>` (zwykły znak `\<` to `\\\<`)") }
+                    if zw = "\"" { blad(kod, p, "`\<` w tekście otwiera wstawkę, ale brak `>` (zwykły znak `\<` to `\\\<`)") }
+                    k : k + 1
+                }
+                k : k + 1
+            } else {
+                k : k + 1
+            }
+        }
+        retrn k + 1
+    }
+    if c = "[" {
+        while nie(znak_na(kod, k) = "]") {
+            if znak_na(kod, k) = "" { blad(kod, s, "lista nie ma zamykającego `]`") }
+            k : k + 1
+        }
+        retrn k + 1
+    }
+    let dwa : "<c><znak_na(kod, k)>"
+    if szukaj(" &_ \<> \<= >= => -> :: ", " <dwa> ") > 0 { retrn k + 1 }
+    if szukaj(":=\<>+-*/%.,(){}&", c) > 0 { retrn k }
+    blad(kod, s, "nie znam znaku `<c>`")
+    retrn k
+}
+
+fn znak_na (kod, k) {
+    if k < 1 { retrn "" }
+    if k > kod.len { retrn "" }
+    retrn kod.at k
+}
+
+fn komentarz (kod, k) {
+    if znak_na(kod, k) = "_" {
+        if znak_na(kod, k + 1) = "_" { retrn true }
+    }
+    retrn false
+}
+
+__ nazwa ciągnie się po literach, cyfrach i _, ale dwa podkreślniki zaczynają komentarz __
+fn dalej_nazwy (kod, k) {
+    if komentarz(kod, k) { retrn false }
+    let c : znak_na(kod, k)
+    if litera(c) { retrn true }
+    retrn cyfra(c)
+}
+
+__ spacja, tabulator, nowa linia i inne znaki sterujące __
+fn bialy (c) {
+    retrn c <= " "
+}
+
+fn cyfra (c) {
+    if c >= "0" {
+        if c <= "9" { retrn true }
+    }
+    retrn false
+}
+
+__ litery, _ i wszystko spoza ASCII (np. ą, ż) __
+fn litera (c) {
+    if c >= "a" {
+        if c <= "z" { retrn true }
+    }
+    if c >= "A" {
+        if c <= "Z" { retrn true }
+    }
+    if c = "_" { retrn true }
+    retrn c > "~"
+}
+
+fn same_cyfry (t) {
+    if t = "" { retrn false }
+    let &_k : 1
+    while k <= t.len {
+        if nie(cyfra(t.at k)) { retrn false }
+        k : k + 1
+    }
+    retrn true
+}
+
+fn slowo_kluczowe (t) {
+    retrn szukaj(" fn let if else elseif loop while has true false use sys retrn ", " <t> ") > 0
+}
+
+fn nowa_linia (kod, od, do) {
+    let &_k : od
+    while k < do {
+        if kod.at k = "\n" { retrn true }
+        k : k + 1
+    }
+    retrn false
+}
+
+__ ---------- błąd: komunikat, linia z kodu i ^ pod miejscem ---------- __
+
+fn blad (kod, p, m use => std::io) {
+    let n : kod.len
+    let &_linia : 1
+    let &_poczatek : 1
+    let &_k : 1
+    while k < p {
+        if k > n { loop,end }
+        if kod.at k = "\n" {
+            linia : linia + 1
+            poczatek : k + 1
+        }
+        k : k + 1
+    }
+    let &_e : poczatek
+    while e <= n {
+        if kod.at e = "\n" { loop,end }
+        e : e + 1
+    }
+    let nr : "<linia>"
+    let lewo : spacje(nr.len)
+    let tekst : wytnij(kod, poczatek, e)
+    let strzalka : spacje(p - poczatek)
+    sys::err("błąd: <m>\n<lewo>--> linia <linia>, kolumna <p - poczatek + 1>\n<lewo> |\n<nr> | <tekst>\n<lewo> | <strzalka>^")
+}
+
+__ ---------- tekst ---------- __
+
+fn nie (x) {
+    if x { retrn false }
+    retrn true
+}
+
+__ znaki od..do-1 __
+fn wytnij (t, od, do) {
+    let &_s : ""
+    let &_k : od
+    while k < do {
+        s : "<s><t.at k>"
+        k : k + 1
+    }
+    retrn s
+}
+
+fn do_kreski (t, od) {
+    let &_k : od
+    while nie(t.at k = "|") { k : k + 1 }
+    retrn wytnij(t, od, k)
+}
+
+fn spacje (n) {
+    let &_s : ""
+    let &_k : 0
+    while k < n {
+        s : "<s> "
+        k : k + 1
+    }
+    retrn s
+}
+
+fn szukaj (t, s) {
+    retrn szukaj_od(t, s, 1)
+}
+
+__ pierwsze miejsce s w t od miejsca od, albo 0 __
+fn szukaj_od (t, s, od) {
+    let &_k : od
+    if k < 1 { k : 1 }
+    while k + s.len - 1 <= t.len {
+        if pasuje(t, s, k) { retrn k }
+        k : k + 1
+    }
+    retrn 0
+}
+
+fn ostatnie (t, s) {
+    let &_k : t.len - s.len + 1
+    while k >= 1 {
+        if pasuje(t, s, k) { retrn k }
+        k : k - 1
+    }
+    retrn 0
+}
+
+fn pasuje (t, s, k) {
+    let &_j : 1
+    while j <= s.len {
+        if nie(t.at (k + j - 1) = s.at j) { retrn false }
+        j : j + 1
+    }
+    retrn true
+}
